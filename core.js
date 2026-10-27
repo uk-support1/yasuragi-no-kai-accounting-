@@ -6,13 +6,13 @@
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
   // line: 総会資料で表示する科目名（省略時は科目名）／ sub: 市補助金の区分（事務費・事業費・その他・対象外）
-  // net: 総会資料では、その収入科目から差し引いて表示する（例：イベント費用を事業収入から差引）
+  // net: （任意）総会資料で、その収入科目から差し引いて表示したいときに設定（初期設定では使わず、すべて独立した行で表示）
   const DEFAULT_CATS = [
     { n: '会費', t: 'in' }, { n: '補助金', t: 'in' }, { n: '事業収入', t: 'in' }, { n: '雑収入', t: 'in' },
     { n: '会議費', t: 'out', sub: '事務費' }, { n: '研修費', t: 'out', sub: '事業費' }, { n: '通信費', t: 'out', sub: '事務費' },
     { n: '交通費', t: 'out', sub: '事業費' }, { n: '消耗品費', t: 'out', sub: '事務費' },
     { n: '交際費', t: 'out', line: '交際・慶弔費', sub: 'その他' }, { n: '慶弔費', t: 'out', line: '交際・慶弔費', sub: '対象外' },
-    { n: '諸会費', t: 'out', sub: 'その他' }, { n: 'イベント費用', t: 'out', sub: '事業費', net: '事業収入' },
+    { n: '諸会費', t: 'out', sub: 'その他' }, { n: 'イベント費用', t: 'out', sub: '事業費' },
     { n: 'ゆうちょ手数料', t: 'out', line: '振込手数料', sub: '事務費' }, { n: '雑費', t: 'out', sub: 'その他' }, { n: '予備費', t: 'out', sub: 'その他' },
     { n: '資金移動', t: 'move' },
   ];
@@ -37,7 +37,7 @@
   }
   function defaultState() {
     return {
-      v: 3, org: 'やすらぎの会', treasurer: '', fee: 165, feeUnit: 3000,
+      v: 4, org: 'やすらぎの会', treasurer: '', fee: 165, feeUnit: 3000,
       accounts: DEFAULT_ACCTS.slice(), cats: DEFAULT_CATS.map((c) => ({ ...c })),
       entries: [], openings: {}, actuals: {}, prior: {}, checks: {},
       reserve: ['積立口座'], excess: {}, budgets: {}, remarks: {}, notes: {}, yearly: {},
@@ -275,6 +275,11 @@
         else for (const k of ['line', 'sub', 'net']) if (dc[k] && c[k] == null) c[k] = dc[k];
       }
       s.v = 3;
+    }
+    if (s.v < 4) {
+      const ev = s.cats.find((x) => x.n === 'イベント費用');
+      if (ev && ev.net === '事業収入') delete ev.net;
+      s.v = 4;
     }
     return s;
   }

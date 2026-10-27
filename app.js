@@ -315,7 +315,8 @@
       ${S.cats.map((c, i) => `<div style="border-top:1px solid var(--ln);padding:8px 0">
         <div class="kv"><span><b>${esc(c.n)}</b> <span class="muted">${{ in: '収入', out: '支出', move: '移動' }[c.t]}</span></span>${used.has(c.n) ? '<span class="muted">使用中</span>' : `<button class="btn sm sub" data-act="delcat" data-i="${i}">削除</button>`}</div>
         ${c.t === 'move' ? '' : `<div class="two"><input data-catline="${i}" value="${esc(c.line || '')}" placeholder="総会資料での科目名：${esc(c.n)}">
-        ${c.t === 'out' ? `<select data-catsub="${i}">${C.SUBS.map((s) => `<option ${((c.sub && C.SUBS.includes(c.sub)) ? c.sub : 'その他') === s ? 'selected' : ''}>${s}</option>`).join('')}</select>` : '<span></span>'}</div>`}</div>`).join('')}
+        ${c.t === 'out' ? `<select data-catsub="${i}">${C.SUBS.map((s) => `<option ${((c.sub && C.SUBS.includes(c.sub)) ? c.sub : 'その他') === s ? 'selected' : ''}>${s}</option>`).join('')}</select>` : '<span></span>'}</div>`}
+        ${c.t === 'out' ? `<label class="f">総会資料で収入から差し引く先（売上−経費の差引表示）</label><select data-catnet="${i}"><option value="">差し引かない（支出として表示）</option>${C.lineNames(S, 'in').map((l) => `<option ${c.net === l ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>` : ''}</div>`).join('')}
       <div class="row" style="margin-top:8px"><input id="nc-name" placeholder="新しい科目名"><select id="nc-type"><option value="out">支出</option><option value="in">収入</option></select></div>
       <button class="btn sub" data-act="addcat">科目を追加</button>
     </div>
@@ -381,6 +382,7 @@
     else if (t.dataset.excess != null) { (S.excess[S.fy] = S.excess[S.fy] || {})[t.dataset.excess] = t.value.trim() === '' ? null : parseAmt(t.value); save(); render(); }
     else if (t.dataset.reserve != null) { const a = t.dataset.reserve; S.reserve = S.reserve.filter((x) => x !== a); if (t.checked) S.reserve.push(a); save(); render(); }
     else if (t.dataset.catline != null) { const c = S.cats[+t.dataset.catline], v = t.value.trim(); if (v && v !== c.n) c.line = v; else delete c.line; save(); toast('保存しました'); }
+    else if (t.dataset.catnet != null) { const c = S.cats[+t.dataset.catnet]; if (t.value) c.net = t.value; else delete c.net; save(); toast('保存しました'); }
     else if (t.dataset.catsub != null) { S.cats[+t.dataset.catsub].sub = t.value; save(); toast('保存しました'); }
     else if (t.dataset.bud != null) { setMap(S.budgets, S.fy, t.dataset.bud, t.value.trim() === '' ? undefined : parseAmt(t.value)); save(); toast('保存しました'); }
     else if (t.dataset.bud2 != null) { setMap(S.budgets, S.fy + 1, t.dataset.bud2, t.value.trim() === '' ? undefined : parseAmt(t.value)); save(); toast('保存しました'); }

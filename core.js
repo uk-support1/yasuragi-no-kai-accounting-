@@ -6,13 +6,14 @@
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
   // line: 総会資料で表示する科目名（省略時は科目名）／ sub: 市補助金の区分（事務費・事業費・その他・対象外）
+  // net: 総会資料では、その収入科目から差し引いて表示する（例：イベント費用を事業収入から差引）
   const DEFAULT_CATS = [
     { n: '会費', t: 'in' }, { n: '補助金', t: 'in' }, { n: '事業収入', t: 'in' }, { n: '雑収入', t: 'in' },
     { n: '会議費', t: 'out', sub: '事務費' }, { n: '研修費', t: 'out', sub: '事業費' }, { n: '通信費', t: 'out', sub: '事務費' },
     { n: '交通費', t: 'out', sub: '事業費' }, { n: '消耗品費', t: 'out', sub: '事務費' },
     { n: '交際費', t: 'out', line: '交際・慶弔費', sub: 'その他' }, { n: '慶弔費', t: 'out', line: '交際・慶弔費', sub: '対象外' },
-    { n: '諸会費', t: 'out', sub: 'その他' }, { n: 'イベント費用', t: 'out', sub: '事業費' },
-    { n: 'ゆうちょ手数料', t: 'out', sub: '事務費' }, { n: '雑費', t: 'out', sub: 'その他' }, { n: '予備費', t: 'out', sub: 'その他' },
+    { n: '諸会費', t: 'out', sub: 'その他' }, { n: 'イベント費用', t: 'out', sub: '事業費', net: '事業収入' },
+    { n: 'ゆうちょ手数料', t: 'out', line: '振込手数料', sub: '事務費' }, { n: '雑費', t: 'out', sub: 'その他' }, { n: '予備費', t: 'out', sub: 'その他' },
     { n: '資金移動', t: 'move' },
   ];
   const SUBS = ['事務費', '事業費', 'その他', '対象外'];
@@ -36,7 +37,7 @@
   }
   function defaultState() {
     return {
-      v: 2, org: 'やすらぎの会', treasurer: '', fee: 165, feeUnit: 3000,
+      v: 3, org: 'やすらぎの会', treasurer: '', fee: 165, feeUnit: 3000,
       accounts: DEFAULT_ACCTS.slice(), cats: DEFAULT_CATS.map((c) => ({ ...c })),
       entries: [], openings: {}, actuals: {}, prior: {}, checks: {},
       reserve: ['積立口座'], excess: {}, budgets: {}, remarks: {}, notes: {}, yearly: {},
@@ -152,16 +153,22 @@
   }
   function lineNames(state, t) {
     const seen = [];
-    for (const c of state.cats) { if (c.t !== t) continue; const l = c.line || c.n; if (!seen.includes(l)) seen.push(l); }
+    for (const c of state.cats) { if (c.t !== t || c.net) continue; const l = c.line || c.n; if (!seen.includes(l)) seen.push(l); }
     return seen;
   }
   function lineTotals(state, fy) {
     const t = categoryTotals(state, fy), r = { in: {}, out: {} };
-    for (const k of ['in', 'out']) for (const cat in t[k]) { const l = lineOf(state, cat); r[k][l] = (r[k][l] || 0) + t[k][cat]; }
+    for (const k of ['in', 'out']) for (const cat in t[k]) {
+      const c = state.cats.find((x) => x.n === cat);
+      if (k === 'out' && c && c.net) { r.in[c.net] = (r.in[c.net] || 0) - t.out[cat]; continue; }
+      const l = lineOf(state, cat); r[k][l] = (r[k][l] || 0) + t[k][cat];
+    }
     return r;
   }
   function autoRemark(state, fy, line) {
-    const es = state.entries.filter((e) => inFy(e, fy) && !isReserveAcct(state, e.acct) && !isMove(state, e) && lineOf(state, e.cat) === line);
+    const netCats = state.cats.filter((c) => c.net === line).map((c) => c.n);
+    const all = state.entries.filter((e) => inFy(e, fy) && !isReserveAcct(state, e.acct) && !isMove(state, e) && (lineOf(state, e.cat) === line || netCats.includes(e.cat)));
+    const es = all.filter((e) => !netCats.includes(e.cat));
     if (!es.length) return '';
     const unit = +state.feeUnit || 0;
     if (line === '会費' && unit > 0) {
@@ -174,7 +181,11 @@
       by.set(k, (by.get(k) || 0) + e.amount);
     }
     const top = [...by.entries()].sort((a, b) => b[1] - a[1]);
-    return top.slice(0, 3).map(([k]) => (k.length > 14 ? k.slice(0, 14) + '…' : k)).join('、') + (top.length > 3 ? ' 他' : '');
+    const txt = top.slice(0, 3).map(([k]) => (k.length > 14 ? k.slice(0, 14) + '…' : k)).join('、') + (top.length > 3 ? ' 他' : '');
+    const cost = all.filter((e) => netCats.includes(e.cat)).reduce((a, e) => a + (e.kind === 'out' ? e.amount : -e.amount), 0);
+    if (!cost) return txt;
+    const gross = es.reduce((a, e) => a + (e.kind === 'in' ? e.amount : -e.amount), 0);
+    return `${txt}（売上${gross.toLocaleString('ja-JP')}円−経費${cost.toLocaleString('ja-JP')}円の差引）`;
   }
   const remarkOf = (state, fy, line) => { const m = state.remarks[fy]; return m && m[line] != null ? m[line] : autoRemark(state, fy, line); };
   const numOrNull = (v) => (v == null || v === '' ? null : +v);
@@ -239,6 +250,7 @@
     let B = 0;
     for (const cat in t.out) {
       const c = state.cats.find((x) => x.n === cat);
+      if (c && c.net) continue;
       const k = c && c.sub && SUBS.includes(c.sub) ? c.sub : 'その他';
       sub[k] += t.out[cat]; B += t.out[cat];
       if (t.out[cat]) names[k].push(cat);
@@ -256,13 +268,13 @@
     const d = defaultState();
     for (const k of ['reserve', 'excess', 'budgets', 'remarks', 'notes', 'yearly', 'info']) if (s[k] == null) s[k] = d[k];
     if (s.feeUnit == null) s.feeUnit = 3000;
-    if (!s.v || s.v < 2) {
+    if (!s.v || s.v < 3) {
       for (const dc of DEFAULT_CATS) {
         const c = s.cats.find((x) => x.n === dc.n);
         if (!c) s.cats.push({ ...dc });
-        else { if (dc.line && c.line == null) c.line = dc.line; if (dc.sub && c.sub == null) c.sub = dc.sub; }
+        else for (const k of ['line', 'sub', 'net']) if (dc[k] && c[k] == null) c[k] = dc[k];
       }
-      s.v = 2;
+      s.v = 3;
     }
     return s;
   }

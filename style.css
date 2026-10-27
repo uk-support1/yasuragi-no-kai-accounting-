@@ -70,3 +70,29 @@ summary{cursor:pointer;padding:8px 0}
 .scroll td:first-child,.scroll th:first-child{white-space:nowrap}
 .top .title{white-space:nowrap}
 .top select{max-width:55%}
+
+.paper{background:#fff;border:1px solid var(--ln);border-radius:14px;padding:14px;margin-bottom:14px;color:#111}
+.paper h1{font-size:16px;text-align:center;margin:4px 0 2px;font-weight:700}
+.paper .psub{text-align:center;font-size:12px;margin-bottom:10px}
+.paper .cap{font-weight:700;font-size:13px;margin:12px 0 3px}
+.paper table{border:1px solid #444;font-size:12.5px}
+.paper th,.paper td{border:1px solid #666;padding:4px 6px;text-align:left;color:#111}
+.paper th{background:#eee;text-align:center;font-weight:600}
+.paper td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.paper tr.b td{font-weight:700}
+.paper tr.shade td{background:#f3f3f3}
+.paper p.t{margin:6px 0;font-size:13px;line-height:1.7}
+.paper .ptools{display:flex;justify-content:flex-end;margin-bottom:4px}
+.paper .scroll table{min-width:0}
+.paper .scroll.wide table{min-width:520px}
+.warnbox{background:#fff6e5;border:1px solid #f0cf8a;color:#7a4b00;border-radius:10px;padding:8px 12px;margin:0 0 10px;font-size:13px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+@media print{
+  .paper{border:0;border-radius:0;padding:0;margin:0;page-break-after:always;break-after:page}
+  .paper:last-of-type{page-break-after:auto;break-after:auto}
+  .paper table{font-size:9.5pt}
+  .paper th,.paper td{padding:2px 5px}
+  .paper .cap{margin:7px 0 2px}
+  .paper p.t{margin:3px 0;font-size:10.5pt;line-height:1.5}
+  .paper h1{font-size:14pt}
+}

@@ -5,13 +5,17 @@
   const pad = (n) => String(n).padStart(2, '0');
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
+  // line: 総会資料で表示する科目名（省略時は科目名）／ sub: 市補助金の区分（事務費・事業費・その他・対象外）
   const DEFAULT_CATS = [
     { n: '会費', t: 'in' }, { n: '補助金', t: 'in' }, { n: '事業収入', t: 'in' }, { n: '雑収入', t: 'in' },
-    { n: '会議費', t: 'out' }, { n: '研修費', t: 'out' }, { n: '通信費', t: 'out' }, { n: '交通費', t: 'out' },
-    { n: '消耗品費', t: 'out' }, { n: '交際費', t: 'out' }, { n: '諸会費', t: 'out' }, { n: 'イベント費用', t: 'out' },
-    { n: 'ゆうちょ手数料', t: 'out' }, { n: '雑費', t: 'out' },
+    { n: '会議費', t: 'out', sub: '事務費' }, { n: '研修費', t: 'out', sub: '事業費' }, { n: '通信費', t: 'out', sub: '事務費' },
+    { n: '交通費', t: 'out', sub: '事業費' }, { n: '消耗品費', t: 'out', sub: '事務費' },
+    { n: '交際費', t: 'out', line: '交際・慶弔費', sub: 'その他' }, { n: '慶弔費', t: 'out', line: '交際・慶弔費', sub: '対象外' },
+    { n: '諸会費', t: 'out', sub: 'その他' }, { n: 'イベント費用', t: 'out', sub: '事業費' },
+    { n: 'ゆうちょ手数料', t: 'out', sub: '事務費' }, { n: '雑費', t: 'out', sub: 'その他' }, { n: '予備費', t: 'out', sub: 'その他' },
     { n: '資金移動', t: 'move' },
   ];
+  const SUBS = ['事務費', '事業費', 'その他', '対象外'];
   const DEFAULT_ACCTS = ['現金', '普通口座', '積立口座', 'ゆうちょ振込'];
 
   function fyOf(d) {
@@ -32,9 +36,11 @@
   }
   function defaultState() {
     return {
-      v: 1, org: 'やすらぎの会', treasurer: '', fee: 165,
+      v: 2, org: 'やすらぎの会', treasurer: '', fee: 165, feeUnit: 3000,
       accounts: DEFAULT_ACCTS.slice(), cats: DEFAULT_CATS.map((c) => ({ ...c })),
       entries: [], openings: {}, actuals: {}, prior: {}, checks: {},
+      reserve: ['積立口座'], excess: {}, budgets: {}, remarks: {}, notes: {}, yearly: {},
+      info: { president: '', signTitle: '会長兼会計', address: '', members: '', assemblyCount: '', regularCount: '', attendees: '', schedule: '', bulletin: '', activities: '', auditor1: '', auditor2: '' },
       fy: fyOf(todayStr()),
     };
   }
@@ -44,6 +50,8 @@
     return c ? c.t : null;
   }
   const isMove = (state, e) => catType(state, e.cat) === 'move';
+  const isReserveAcct = (state, a) => (state.reserve || []).includes(a);
+  const lineOf = (state, name) => { const c = state.cats.find((x) => x.n === name); return (c && c.line) || name; };
   const inFy = (e, fy) => fyOf(e.date) === fy;
   const sortEntries = (list) =>
     list.slice().sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.id < b.id ? -1 : 1));
@@ -52,7 +60,7 @@
   function categoryTotals(state, fy) {
     const inn = {}, out = {};
     for (const e of state.entries) {
-      if (!inFy(e, fy) || isMove(state, e)) continue;
+      if (!inFy(e, fy) || isMove(state, e) || isReserveAcct(state, e.acct)) continue;
       const m = e.kind === 'in' ? inn : out;
       m[e.cat] = (m[e.cat] || 0) + e.amount;
     }
@@ -87,7 +95,7 @@
       const closing = opening + f.in - f.out;
       const actualRaw = state.actuals[fy] && state.actuals[fy][a];
       const actual = actualRaw == null || actualRaw === '' ? null : +actualRaw;
-      return { name: a, opening, in: f.in, out: f.out, closing, actual, diff: actual == null ? null : actual - closing };
+      return { name: a, opening, in: f.in, out: f.out, closing, actual, diff: actual == null ? null : actual - closing, reserve: isReserveAcct(state, a), excess: excessOf(state, fy, a) };
     });
   }
 
@@ -103,7 +111,7 @@
       for (const e of state.entries) {
         if (e.date.slice(0, 7) !== ym) continue;
         if (acct[e.acct]) acct[e.acct][e.kind] += e.amount;
-        if (!isMove(state, e)) { if (e.kind === 'in') inc += e.amount; else exp += e.amount; }
+        if (!isMove(state, e) && !isReserveAcct(state, e.acct)) { if (e.kind === 'in') inc += e.amount; else exp += e.amount; }
       }
       const bal = {};
       state.accounts.forEach((a) => { run[a] += acct[a].in - acct[a].out; bal[a] = run[a]; });
@@ -111,7 +119,155 @@
     });
   }
 
-  /* 報告書データ（画面表示・Excel 出力で共通） */
+  /* ---------- 一般会計の繰越・積立口座・総会資料用の集計 ---------- */
+  // 繰越に含めない金額（不明金・預り金など）。前年度の設定を引き継ぐ
+  function excessOf(state, fy, acct, depth = 0) {
+    const o = state.excess && state.excess[fy];
+    if (o && o[acct] != null && o[acct] !== '') return +o[acct];
+    if (depth > 30) return 0;
+    if (!Object.keys(state.excess || {}).some((k) => +k < fy)) return 0;
+    return excessOf(state, fy - 1, acct, depth + 1);
+  }
+  function carry(state, fy) {
+    let o = 0, c = 0;
+    for (const a of state.accounts) {
+      if (isReserveAcct(state, a)) continue;
+      const ex = excessOf(state, fy, a);
+      o += openingOf(state, fy, a) - ex;
+      c += closingOf(state, fy, a) - ex;
+    }
+    return { opening: o, closing: c };
+  }
+  function reserveSummary(state, fy) {
+    const r = { has: false, opening: 0, toReserve: 0, fromReserve: 0, interest: 0, otherOut: 0, closing: 0 };
+    for (const a of state.accounts) if (isReserveAcct(state, a)) { r.has = true; r.opening += openingOf(state, fy, a); }
+    for (const e of state.entries) {
+      if (!inFy(e, fy) || !isReserveAcct(state, e.acct)) continue;
+      const mv = isMove(state, e);
+      if (e.kind === 'in') { if (mv) r.toReserve += e.amount; else r.interest += e.amount; }
+      else if (mv) r.fromReserve += e.amount; else r.otherOut += e.amount;
+    }
+    r.closing = r.opening + r.toReserve + r.interest - r.fromReserve - r.otherOut;
+    return r;
+  }
+  function lineNames(state, t) {
+    const seen = [];
+    for (const c of state.cats) { if (c.t !== t) continue; const l = c.line || c.n; if (!seen.includes(l)) seen.push(l); }
+    return seen;
+  }
+  function lineTotals(state, fy) {
+    const t = categoryTotals(state, fy), r = { in: {}, out: {} };
+    for (const k of ['in', 'out']) for (const cat in t[k]) { const l = lineOf(state, cat); r[k][l] = (r[k][l] || 0) + t[k][cat]; }
+    return r;
+  }
+  function autoRemark(state, fy, line) {
+    const es = state.entries.filter((e) => inFy(e, fy) && !isReserveAcct(state, e.acct) && !isMove(state, e) && lineOf(state, e.cat) === line);
+    if (!es.length) return '';
+    const unit = +state.feeUnit || 0;
+    if (line === '会費' && unit > 0) {
+      const s = es.filter((e) => e.kind === 'in').reduce((a, e) => a + e.amount, 0);
+      if (s && s % unit === 0) return `会費${s / unit}名分 ＠${unit.toLocaleString('ja-JP')}`;
+    }
+    const by = new Map();
+    for (const e of es) {
+      const k = (e.desc || e.cat).replace(/^[\d０-９]+\/[\d０-９]+[（(][^）)]*[）)]\s*/, '').replace(/[（(][^）)]*[）)]/g, '').replace(/※.*$/, '').replace(/\s+/g, ' ').trim() || e.cat;
+      by.set(k, (by.get(k) || 0) + e.amount);
+    }
+    const top = [...by.entries()].sort((a, b) => b[1] - a[1]);
+    return top.slice(0, 3).map(([k]) => (k.length > 14 ? k.slice(0, 14) + '…' : k)).join('、') + (top.length > 3 ? ' 他' : '');
+  }
+  const remarkOf = (state, fy, line) => { const m = state.remarks[fy]; return m && m[line] != null ? m[line] : autoRemark(state, fy, line); };
+  const numOrNull = (v) => (v == null || v === '' ? null : +v);
+  const budgetOf = (state, fy, line) => numOrNull(state.budgets[fy] && state.budgets[fy][line]);
+  const sumK = (rows, k) => rows.reduce((s, r) => s + (r[k] || 0), 0);
+
+  /* 決算報告（第2号議案）：予算額・決算額・比較増減・備考 */
+  function settlement(state, fy) {
+    const lt = lineTotals(state, fy), rs = reserveSummary(state, fy), cr = carry(state, fy);
+    const mk = (kind, t) => {
+      const names = lineNames(state, t);
+      Object.keys(lt[kind]).forEach((n) => { if (!names.includes(n)) names.push(n); });
+      return names.map((line) => ({ line, budget: budgetOf(state, fy, line), actual: lt[kind][line] || 0, remark: remarkOf(state, fy, line) }))
+        .filter((r) => r.actual || r.budget);
+    };
+    const inc = mk('in', 'in'), exp = mk('out', 'out');
+    if (rs.fromReserve) inc.push({ line: '積立口座より繰入', budget: null, actual: rs.fromReserve, remark: remarkOf(state, fy, '積立口座より繰入') });
+    if (rs.toReserve) exp.push({ line: '積立口座へ繰入', budget: null, actual: rs.toReserve, remark: remarkOf(state, fy, '積立口座へ繰入') });
+    const incSub = { budget: sumK(inc, 'budget'), actual: sumK(inc, 'actual') };
+    const expSub = { budget: sumK(exp, 'budget'), actual: sumK(exp, 'actual') };
+    const incTotal = { budget: incSub.budget + cr.opening, actual: incSub.actual + cr.opening };
+    const next = { budget: incTotal.budget - expSub.budget, actual: cr.closing };
+    const expTotal = { budget: expSub.budget + next.budget, actual: expSub.actual + next.actual };
+    const accounts = state.accounts.filter((a) => !isReserveAcct(state, a)).map((a) => {
+      const ex = excessOf(state, fy, a);
+      return { name: a, excess: ex, amount: closingOf(state, fy, a) - ex };
+    }).filter((a) => a.amount || a.excess);
+    return { fy, inc, exp, incSub, expSub, opening: cr.opening, incTotal, next, expTotal, gap: incTotal.actual - expTotal.actual, reserve: rs, accounts };
+  }
+
+  // 来年度の予算額・摘要。未入力なら今年度の値を初期値として使う
+  function nextBudget(state, fy, line) {
+    const b = numOrNull(state.budgets[fy + 1] && state.budgets[fy + 1][line]);
+    return b != null ? b : numOrNull(state.budgets[fy] && state.budgets[fy][line]);
+  }
+  function nextNote(state, fy, line) {
+    const m = state.notes[fy + 1]; if (m && m[line] != null) return m[line];
+    const p = state.notes[fy]; return p && p[line] != null ? p[line] : '';
+  }
+
+  /* 来年度の予算案（第4号議案） */
+  function budgetPlan(state, fy) {
+    const nf = fy + 1, lt = lineTotals(state, fy), cr = carry(state, fy);
+    const eff = (line) => nextBudget(state, fy, line);
+    const note = (line) => nextNote(state, fy, line);
+    const mk = (kind, t) => {
+      const names = lineNames(state, t);
+      Object.keys(lt[kind]).forEach((n) => { if (!names.includes(n)) names.push(n); });
+      return names.map((line) => ({ line, budget: eff(line), note: note(line), prev: lt[kind][line] || 0 })).filter((r) => r.budget != null || r.prev);
+    };
+    const inc = mk('in', 'in'), exp = mk('out', 'out');
+    const incSub = sumK(inc, 'budget'), expSub = sumK(exp, 'budget');
+    const incTotal = incSub + cr.closing, next = incTotal - expSub;
+    return { fy: nf, inc, exp, incSub, carry: cr.closing, incTotal, expSub, next, expTotal: expSub + next };
+  }
+
+  /* 市補助金 実績報告 */
+  function subsidy(state, fy) {
+    const t = categoryTotals(state, fy), lt = lineTotals(state, fy), st = settlement(state, fy);
+    const sub = {}, names = {};
+    SUBS.forEach((k) => { sub[k] = 0; names[k] = []; });
+    let B = 0;
+    for (const cat in t.out) {
+      const c = state.cats.find((x) => x.n === cat);
+      const k = c && c.sub && SUBS.includes(c.sub) ? c.sub : 'その他';
+      sub[k] += t.out[cat]; B += t.out[cat];
+      if (t.out[cat]) names[k].push(cat);
+    }
+    const city = lt.in['補助金'] || 0, self = (lt.in['会費'] || 0) + (lt.in['事業収入'] || 0);
+    const A = st.incTotal.actual;
+    return {
+      A, national: 0, prefecture: 0, city, self, carryIn: st.opening, other: A - city - self - st.opening,
+      B, target: B - sub['対象外'], sub, names, next: st.next.actual,
+      selfNote: [lt.in['会費'] ? `会費${lt.in['会費'].toLocaleString('ja-JP')}` : '', lt.in['事業収入'] ? `事業収入${lt.in['事業収入'].toLocaleString('ja-JP')}` : ''].filter(Boolean).join('、'),
+    };
+  }
+
+  function migrate(s) {
+    const d = defaultState();
+    for (const k of ['reserve', 'excess', 'budgets', 'remarks', 'notes', 'yearly', 'info']) if (s[k] == null) s[k] = d[k];
+    if (s.feeUnit == null) s.feeUnit = 3000;
+    if (!s.v || s.v < 2) {
+      for (const dc of DEFAULT_CATS) {
+        const c = s.cats.find((x) => x.n === dc.n);
+        if (!c) s.cats.push({ ...dc });
+        else { if (dc.line && c.line == null) c.line = dc.line; if (dc.sub && c.sub == null) c.sub = dc.sub; }
+      }
+      s.v = 2;
+    }
+    return s;
+  }
+
+  /* 報告書データ（前年度比較・内訳用） */
   function buildReport(state, fy) {
     const cur = categoryTotals(state, fy);
     const hasPrevEntries = state.entries.some((e) => inFy(e, fy - 1));
@@ -141,8 +297,8 @@
     const totIn = { cur: sum(incomeRows, 'cur'), prev: sum(incomeRows, 'prev') };
     const totOut = { cur: sum(expenseRows, 'cur'), prev: sum(expenseRows, 'prev') };
     const bal = balances(state, fy);
-    const opening = bal.reduce((s, b) => s + b.opening, 0);
-    const closing = bal.reduce((s, b) => s + b.closing, 0);
+    const cr = carry(state, fy);
+    const opening = cr.opening, closing = cr.closing;
     const details = {};
     for (const e of sortEntries(state.entries.filter((e) => inFy(e, fy)))) (details[e.cat] = details[e.cat] || []).push(e);
     return {
@@ -221,7 +377,7 @@
       }
     }
     if (splitN) log.push(`${splitN}件：収入と同じ行に入っていた振込手数料を、別の明細（ゆうちょ手数料）に分けました`);
-    const out = { entries, newCats, openings: {}, prior: {}, checks: {}, log };
+    const out = { entries, newCats, openings: {}, excess: {}, prior: {}, checks: {}, log };
 
     // 期首残高・現金チェック（月別収支 兼 現金チェック）
     const mw = wb.getWorksheet('月別収支 兼 現金チェック');
@@ -230,6 +386,8 @@
     if (mw && fy != null) {
       const cash = num(cv(mw.getCell('R2'))), yucho = num(cv(mw.getCell('U2')));
       out.openings[fy] = { 現金: cash, ゆうちょ振込: yucho };
+      out.excess[fy] = { ゆうちょ振込: yucho };
+      log.push(`ゆうちょの期首残高 ${yucho.toLocaleString('ja-JP')}円 は「過剰分」として、繰越金に含めない扱いにしました（元のExcelと同じ考え方）`);
       for (let r = 3; r <= 14; r++) {
         const amt = cv(mw.getCell('N' + r)), day = dateStr(cv(mw.getCell('O' + r))), q = dateStr(cv(mw.getCell('Q' + r)));
         if (typeof amt === 'number' && day && q) out.checks[q.slice(0, 7)] = { amount: amt, date: day };
@@ -271,6 +429,7 @@
   const api = {
     uid, pad, fyOf, fyMonths, todayStr, defaultState, catType, isMove, inFy, sortEntries,
     categoryTotals, openingOf, closingOf, balances, monthly, buildReport, importLegacy, DEFAULT_CATS, DEFAULT_ACCTS,
+    SUBS, isReserveAcct, lineOf, excessOf, carry, reserveSummary, lineNames, lineTotals, autoRemark, remarkOf, settlement, budgetPlan, nextBudget, nextNote, subsidy, migrate,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Core = api;

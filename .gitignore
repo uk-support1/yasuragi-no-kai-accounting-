@@ -1,0 +1,6 @@
+# 会計の実データはリポジトリに入れない
+*.xlsx
+*.xls
+*.csv
+*backup*.json
+node_modules/
